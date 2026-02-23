@@ -3,11 +3,12 @@ import yfinance as yf
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+import pandas as pd
 import datetime
 import sys
 import os
 
-# Fix path for Streamlit Cloud
+# Fix module path for Streamlit Cloud
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from data.loader import load_stock, load_portfolio
@@ -25,7 +26,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Load Glass UI
+# Load Glass UI safely
 try:
     with open("assets/style.css") as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
@@ -75,24 +76,27 @@ with tab1:
         st.info("Market Closed (Weekend)")
 
     try:
-        # Try 1-minute interval
         live = yf.download(ticker, period="1d", interval="1m")
 
         if live.empty:
-            # Fallback to 5-minute
             live = yf.download(ticker, period="1d", interval="5m")
 
         if live.empty:
-            # Final fallback daily
             daily = yf.download(ticker, period="5d", interval="1d")
 
             if daily.empty:
                 st.error("Market data unavailable.")
             else:
+                if isinstance(daily.columns, pd.MultiIndex):
+                    daily.columns = daily.columns.get_level_values(0)
+
                 latest_price = daily["Close"].iloc[-1]
                 st.metric("Latest Close Price", round(latest_price, 2))
                 st.info("Showing latest available daily close.")
         else:
+            if isinstance(live.columns, pd.MultiIndex):
+                live.columns = live.columns.get_level_values(0)
+
             latest_price = live["Close"].iloc[-1]
             st.metric("Live Price", round(latest_price, 2))
 
@@ -106,13 +110,7 @@ with tab1:
             st.plotly_chart(fig, use_container_width=True)
 
     except Exception:
-        st.warning("Live intraday data unavailable. Showing last close.")
-
-        fallback = yf.download(ticker, period="5d", interval="1d")
-
-        if not fallback.empty:
-            st.metric("Latest Close Price",
-                      round(fallback["Close"].iloc[-1], 2))
+        st.warning("Live intraday data unavailable.")
 
 # ---------------------------------------------------
 # MAIN ANALYSIS
@@ -125,6 +123,10 @@ if run:
         st.error("No historical data available.")
         st.stop()
 
+    # Fix MultiIndex if exists
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+
     df = add_indicators(df)
 
     if df.empty:
@@ -136,21 +138,25 @@ if run:
 
         st.subheader("📊 Moving Average Strategy")
 
-        signal = trading_signal(
-            df["SMA_20"].iloc[-1],
-            df["SMA_50"].iloc[-1]
-        )
+        if "SMA_20" in df.columns and "SMA_50" in df.columns:
 
-        st.markdown(f"## {signal}")
+            signal = trading_signal(
+                df["SMA_20"].iloc[-1],
+                df["SMA_50"].iloc[-1]
+            )
 
-        fig = px.line(
-            df,
-            x="Date",
-            y="Close",
-            template="plotly_dark",
-            title="Historical Price"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+            st.markdown(f"## {signal}")
+
+        if "Date" in df.columns and "Close" in df.columns:
+
+            fig = px.line(
+                df,
+                x="Date",
+                y="Close",
+                template="plotly_dark",
+                title="Historical Price"
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
     # ---------------- TAB 3 PORTFOLIO ----------------
     with tab3:
@@ -162,31 +168,37 @@ if run:
                    "ICICIBANK.NS"]
 
         portfolio_data = load_portfolio(tickers, start, end)
-        returns = portfolio_data.pct_change().dropna()
 
-        if returns.empty:
-            st.warning("Not enough data for portfolio optimization.")
-        else:
-            results = efficient_frontier(returns)
+        if not portfolio_data.empty:
 
-            fig = go.Figure(data=go.Scatter(
-                x=results[:, 1],
-                y=results[:, 0],
-                mode="markers",
-                marker=dict(
-                    color=results[:, 2],
-                    colorscale="Viridis",
-                    showscale=True
+            returns = portfolio_data.pct_change().dropna()
+
+            if not returns.empty:
+
+                results = efficient_frontier(returns)
+
+                fig = go.Figure(data=go.Scatter(
+                    x=results[:, 1],
+                    y=results[:, 0],
+                    mode="markers",
+                    marker=dict(
+                        color=results[:, 2],
+                        colorscale="Viridis",
+                        showscale=True
+                    )
+                ))
+
+                fig.update_layout(
+                    template="plotly_dark",
+                    xaxis_title="Volatility",
+                    yaxis_title="Expected Return"
                 )
-            ))
 
-            fig.update_layout(
-                template="plotly_dark",
-                xaxis_title="Volatility",
-                yaxis_title="Expected Return"
-            )
-
-            st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("Not enough return data.")
+        else:
+            st.warning("Portfolio data unavailable.")
 
     # ---------------- TAB 4 ML ----------------
     with tab4:
@@ -214,19 +226,21 @@ if run:
 
         st.subheader("🌌 3D Correlation Matrix")
 
-        corr = portfolio_data.corr()
+        if not portfolio_data.empty:
 
-        fig = go.Figure(data=[go.Surface(
-            z=corr.values,
-            x=corr.columns,
-            y=corr.columns
-        )])
+            corr = portfolio_data.corr()
 
-        fig.update_layout(template="plotly_dark")
+            fig = go.Figure(data=[go.Surface(
+                z=corr.values,
+                x=corr.columns,
+                y=corr.columns
+            )])
 
-        st.plotly_chart(fig, use_container_width=True)
+            fig.update_layout(template="plotly_dark")
 
-    # ---------------- TAB 6 REGIME DETECTION ----------------
+            st.plotly_chart(fig, use_container_width=True)
+
+    # ---------------- TAB 6 REGIME ----------------
     with tab6:
 
         st.subheader("📉 NIFTY 50 Regime Detection")
@@ -236,6 +250,10 @@ if run:
         if regime_df.empty:
             st.warning("Not enough data for regime detection.")
         else:
+
+            if isinstance(regime_df.columns, pd.MultiIndex):
+                regime_df.columns = regime_df.columns.get_level_values(0)
+
             fig = px.scatter(
                 regime_df,
                 x=regime_df.index,
