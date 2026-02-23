@@ -3,10 +3,11 @@ import yfinance as yf
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+import datetime
 import sys
 import os
 
-# Fix module path (important for Streamlit Cloud)
+# Fix path for Streamlit Cloud
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from data.loader import load_stock, load_portfolio
@@ -19,9 +20,12 @@ from utils.signals import trading_signal
 # ---------------------------------------------------
 # PAGE CONFIG
 # ---------------------------------------------------
-st.set_page_config(page_title="🇮🇳 Stock Intelligence Elite", layout="wide")
+st.set_page_config(
+    page_title="🇮🇳 Stock Intelligence Elite",
+    layout="wide"
+)
 
-# Load Glass UI safely
+# Load Glass UI
 try:
     with open("assets/style.css") as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
@@ -37,7 +41,8 @@ st.sidebar.header("⚙ Configuration")
 
 ticker = st.sidebar.selectbox(
     "Select NSE Stock",
-    ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS"]
+    ["RELIANCE.NS", "TCS.NS", "INFY.NS",
+     "HDFCBANK.NS", "ICICIBANK.NS"]
 )
 
 start = st.sidebar.date_input("Start Date")
@@ -58,17 +63,35 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 ])
 
 # ---------------------------------------------------
-# TAB 1 — LIVE MARKET
+# TAB 1 — LIVE MARKET (ROBUST VERSION)
 # ---------------------------------------------------
 with tab1:
 
-    st.subheader("📡 Live Intraday Price")
+    st.subheader("📡 Live Market Data")
+
+    now = datetime.datetime.now()
+
+    if now.weekday() >= 5:
+        st.info("Market Closed (Weekend)")
 
     try:
+        # Try 1-minute interval
         live = yf.download(ticker, period="1d", interval="1m")
 
         if live.empty:
-            st.warning("Live data unavailable (market closed or API limit).")
+            # Fallback to 5-minute
+            live = yf.download(ticker, period="1d", interval="5m")
+
+        if live.empty:
+            # Final fallback daily
+            daily = yf.download(ticker, period="5d", interval="1d")
+
+            if daily.empty:
+                st.error("Market data unavailable.")
+            else:
+                latest_price = daily["Close"].iloc[-1]
+                st.metric("Latest Close Price", round(latest_price, 2))
+                st.info("Showing latest available daily close.")
         else:
             latest_price = live["Close"].iloc[-1]
             st.metric("Live Price", round(latest_price, 2))
@@ -78,12 +101,18 @@ with tab1:
                 x=live.index,
                 y="Close",
                 template="plotly_dark",
-                title="Intraday Price Movement"
+                title="Intraday Price"
             )
             st.plotly_chart(fig, use_container_width=True)
 
     except Exception:
-        st.error("Live data fetch failed.")
+        st.warning("Live intraday data unavailable. Showing last close.")
+
+        fallback = yf.download(ticker, period="5d", interval="1d")
+
+        if not fallback.empty:
+            st.metric("Latest Close Price",
+                      round(fallback["Close"].iloc[-1], 2))
 
 # ---------------------------------------------------
 # MAIN ANALYSIS
@@ -114,18 +143,23 @@ if run:
 
         st.markdown(f"## {signal}")
 
-        fig = px.line(df, x="Date", y="Close",
-                      template="plotly_dark",
-                      title="Price Trend")
+        fig = px.line(
+            df,
+            x="Date",
+            y="Close",
+            template="plotly_dark",
+            title="Historical Price"
+        )
         st.plotly_chart(fig, use_container_width=True)
 
-    # ---------------- TAB 3 PORTFOLIO OPTIMIZER ----------------
+    # ---------------- TAB 3 PORTFOLIO ----------------
     with tab3:
 
-        st.subheader("📈 Efficient Frontier (NSE Stocks)")
+        st.subheader("📈 Efficient Frontier")
 
-        tickers = ["RELIANCE.NS", "TCS.NS", "INFY.NS",
-                   "HDFCBANK.NS", "ICICIBANK.NS"]
+        tickers = ["RELIANCE.NS", "TCS.NS",
+                   "INFY.NS", "HDFCBANK.NS",
+                   "ICICIBANK.NS"]
 
         portfolio_data = load_portfolio(tickers, start, end)
         returns = portfolio_data.pct_change().dropna()
@@ -154,10 +188,10 @@ if run:
 
             st.plotly_chart(fig, use_container_width=True)
 
-    # ---------------- TAB 4 ML INSIGHTS ----------------
+    # ---------------- TAB 4 ML ----------------
     with tab4:
 
-        st.subheader("📊 Regression Model Performance")
+        st.subheader("📊 Regression Model")
 
         model, rmse, X_test = train_regression(df)
 
@@ -175,7 +209,7 @@ if run:
 
         st.plotly_chart(fig, use_container_width=True)
 
-    # ---------------- TAB 5 CORRELATION 3D ----------------
+    # ---------------- TAB 5 CORRELATION ----------------
     with tab5:
 
         st.subheader("🌌 3D Correlation Matrix")
@@ -192,24 +226,23 @@ if run:
 
         st.plotly_chart(fig, use_container_width=True)
 
-    # ---------------- TAB 6 NIFTY 50 REGIME ----------------
+    # ---------------- TAB 6 REGIME DETECTION ----------------
     with tab6:
 
-        st.subheader("📉 NIFTY 50 Market Regime Detection")
+        st.subheader("📉 NIFTY 50 Regime Detection")
 
         regime_df = detect_nifty_regime(start, end)
 
         if regime_df.empty:
             st.warning("Not enough data for regime detection.")
         else:
-
             fig = px.scatter(
                 regime_df,
                 x=regime_df.index,
                 y="Close",
                 color="Regime",
                 template="plotly_dark",
-                title="NIFTY 50 Regime Classification"
+                title="NIFTY 50 Market Regimes"
             )
 
             st.plotly_chart(fig, use_container_width=True)
