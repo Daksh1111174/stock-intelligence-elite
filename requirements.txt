@@ -3,7 +3,8 @@ yfinance
 pandas
 numpy
 plotly
+pyspark
 scikit-learn
-shap
 tensorflow
+shap
 matplotlib
