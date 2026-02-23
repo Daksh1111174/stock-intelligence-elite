@@ -1,5 +1,3 @@
-import pandas as pd
-
 def add_indicators(df):
 
     df["Daily_Return"] = df["Close"].pct_change()
