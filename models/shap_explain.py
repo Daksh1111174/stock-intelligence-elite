@@ -1,12 +1,11 @@
 import shap
-import matplotlib.pyplot as plt
+import streamlit as st
 
 def shap_plot(model, X):
 
     explainer = shap.TreeExplainer(model)
     shap_values = explainer.shap_values(X)
 
-    fig = plt.figure()
+    st.set_option('deprecation.showPyplotGlobalUse', False)
     shap.summary_plot(shap_values, X, show=False)
-
-    return fig
+    st.pyplot()
